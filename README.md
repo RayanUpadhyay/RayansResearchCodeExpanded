@@ -1,54 +1,94 @@
-# research.rayanupadhyay.com
+# Fairness and Dependency Preservation in Synthetic Credit Data: expanded code
 
-An interactive companion to my paper, *Fairness and Dependency Preservation in Synthetic Credit Data* (NHSJS Reports, The National High School Journal of Science, 2026), which won a Gold CREST Award, plus a **deluxe edition** of new follow-up experiments.
+Follow-up experiments for my paper **[Fairness and Dependency Preservation in Synthetic Credit Data](https://nhsjs.com/2026/fairness-and-dependency-preservation-in-synthetic-credit-data/)** (*The National High School Journal of Science*, April 2026). They test the questions the paper left open.
 
-**Live:** [research.rayanupadhyay.com](https://research.rayanupadhyay.com)
-**Paper:** [nhsjs.com](https://nhsjs.com/2026/fairness-and-dependency-preservation-in-synthetic-credit-data/) · [PDF](https://nhsjs.com/wp-content/uploads/2026/07/Fairness-and-Dependency-Preservation-in-Synthetic-Credit-Data.pdf)
+**See the results:** [research.rayanupadhyay.com](https://research.rayanupadhyay.com) shows these experiments interactively, next to the published results.
 
-## Features
+> These are new runs, not the published results, and they have not been peer reviewed. Where the paper doesn't pin down a detail, the code makes its own choice and writes it down (see [Definitions](#definitions)), so the absolute numbers aren't directly comparable with the paper's.
 
-- The paper in short: the problem, what I did and what I found, plus the full abstract
-- A results explorer: pick Baseline, SMOTE, CTGAN, TVAE or Gaussian Copula and see the published ROC AUC, Equalized Odds, Disparate Impact, Predictive Parity and Dependency Preservation Score, with error bars and the other methods for comparison
-- Slider labs for Disparate Impact and Predictive Parity, with the paper's results marked on the same scale
-- A live heatmap of the real relationships between the dataset's numeric columns
-- The pipeline, the limitations and a one-click citation
-- **Deluxe edition**: eight new experiments on the questions the paper left open (below)
-- Light and dark mode, and a layout that works on phones
+## What it runs
 
-## The deluxe edition
+Every method is trained and tested on the same 20 stratified 80/20 train/test splits (seeds 0–19). That makes the comparisons paired.
 
-New runs, clearly separated from the published results and not peer reviewed. 20 seeds per method, the same train/test splits for every method:
+| Method key | What it is |
+|---|---|
+| `baseline` | Original training data, no balancing |
+| `baseline_weighted` | Original data with XGBoost class weighting (`scale_pos_weight`) |
+| `baseline_oversampled` | Original data with random oversampling to 50/50 |
+| `reweighing` | Original data with reweighing by sex × label, a fairness-aware preprocessing method (Kamiran & Calders; the paper's recommendation) |
+| `smote` | SMOTE on one-hot data, as in the paper |
+| `smotenc` | SMOTE-NC, the categorical-aware variant |
+| `ctgan`, `tvae`, `gaussian_copula` | SDV generators adding synthetic bad-credit rows until the classes are 50/50 (CTGAN/TVAE: 300 epochs, batch 500, as in the paper) |
+| `mix_<generator>_<25/50/75/100>` | The "synthetic slider": that percentage of the real training rows replaced with synthetic rows |
 
-1. **Reproduction** of all five datasets, including TVAE and Gaussian Copula with a current SDV version
-2. **A class-balanced baseline** (class weighting and random oversampling), the fairer comparison the paper calls for
-3. **Disparate Impact** by method, for women vs men
-4. **The synthetic slider**: what happens as synthetic rows replace 0–100% of the real training data
-5. **The paper's recommendation**: original data with reweighing, a fairness-aware preprocessing method
-6. **Significance tests**: paired Wilcoxon tests against the baseline
-7. **Dependencies, re-measured**: our implementation of the Dependency Preservation Score, plus the Frobenius distance
-8. **A first privacy check**: distance from synthetic rows to the nearest real applicant
+For each run it records:
+- **Performance:** ROC AUC.
+- **Fairness by sex:** Disparate Impact (`di`), Equalized Odds difference (`eo`) and Predictive Parity gap (`pp`).
+- **Fairness by age group** (25 or under vs older): `di_age`, `eo_age`, `pp_age`.
+- **Dependencies:** the Dependency Preservation Score (`dps`, with numeric and categorical parts) and the Frobenius distance between Spearman matrices (`frob`).
+- **Privacy:** distance to closest record for synthetic vs real held-out rows (`dcr_*`), and the share of synthetic rows that exactly copy a training row.
+- **Validity:** whether a generator produced degenerate columns.
+- **Significance:** paired Wilcoxon tests of every method against `baseline`, on AUC and the three sex-based fairness metrics.
 
-The page states every definition the experiments use, because the paper leaves some details open. The absolute numbers are therefore not directly comparable with the paper's.
-
-## Where the numbers come from
-
-- **Published results, definitions and quotes:** taken from the paper, unchanged.
-- **Heatmap and class counts:** computed in the browser from the German Credit data embedded in the page.
-- **Deluxe edition:** produced by `experiments/experiments.py`. The summary is embedded in the page; the raw per-run results are in `experiments/results/raw.jsonl`.
-
-To re-run the experiments:
+## Repository contents
 
 ```
+experiments/
+  experiments.py        everything: data, generators, model, metrics, summary
+  requirements.txt      exact library versions used
+  data/GermanCredit.csv the dataset (1,000 rows)
+  data/DATA-LICENSE.md  dataset credit and licence
+  results/raw.jsonl     one line per seed × method, every metric
+  results/summary.json  means, standard deviations, p-values and the definitions
+```
+
+## Running it
+
+Python 3.11 was used. CTGAN and TVAE need PyTorch, which `sdv` installs.
+
+```bash
 pip install -r experiments/requirements.txt
-python experiments/experiments.py 20
+python experiments/experiments.py 20       # 20 seeds, as on the site; default is 10
+python experiments/experiments.py summary  # rebuild summary.json from raw.jsonl only
 ```
+
+A full 20-seed run takes a while on a CPU, mostly training CTGAN and TVAE. For a quick check, try `python experiments/experiments.py 2`. Runs write `raw.jsonl` as they go, and `summary.json` at the end. If a generator fails on a seed, the error is logged for that method and the run carries on.
+
+## Definitions
+
+The paper leaves some details open, so these are the choices made here. They're also saved inside `summary.json`.
+
+- **Target:** bad credit = 1, good credit = 0.
+- **Model:** XGBoost with library defaults. The paper used AutoGluon, which selected XGBoost.
+- **Protected attribute:** sex, derived from `personal_status_sex`: female = "female : divorced/separated/married", male = every other value. Age group (25 or under) is an extra attribute.
+- **Approval:** predicted good credit (probability of bad credit below 0.5).
+- **Disparate Impact:** women's approval rate ÷ men's (closer to 1 is fairer).
+- **Equalized Odds:** the larger of the TPR gap and the FPR gap between groups (lower is fairer).
+- **Predictive Parity:** absolute gap in precision of approvals (lower is fairer).
+- **Dependency Preservation Score:** the average of two parts, numeric and categorical. The numeric part is 1 minus the mean absolute difference between real and synthetic Spearman correlations. The categorical part does the same with Cramér's V. This is a reading of the paper's description, not its exact code.
+- **SMOTE:** runs on unscaled one-hot data, as in the paper, so loan amount dominates which neighbours it picks.
+- **Generators:** see only the training split.
 
 ## Data and licence
 
-Hofmann, H. (1994). *Statlog (German Credit Data)*. UCI Machine Learning Repository. https://doi.org/10.24432/C5NC77
+Hofmann, H. (1994). *Statlog (German Credit Data)*. UCI Machine Learning Repository. https://doi.org/10.24432/C5NC77, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
-The dataset is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The copy in `experiments/data/` comes from a public CSV version with readable category labels ([github.com/selva86/datasets](https://github.com/selva86/datasets)); the rows are the same as the UCI original. Some of the readable labels in that copy don't exactly match UCI's own codes (the paper also notes known label problems in this dataset).
+The copy in `experiments/data/` is a public CSV version with readable category labels ([github.com/selva86/datasets](https://github.com/selva86/datasets)). Its rows are the same as the UCI original, but some of its labels don't exactly match UCI's own codes. The paper also notes known label problems in this dataset.
 
-## Tech
+## Citation
 
-The page is a single `index.html` with plain HTML, CSS and JavaScript, no libraries and no build step needed to host it. Fonts come from Google Fonts. The experiments use Python with scikit-learn, XGBoost, imbalanced-learn and SDV. Hosted on Vercel.
+If you use this, please cite the paper:
+
+```bibtex
+@article{upadhyay2026fairness,
+  title   = {Fairness and Dependency Preservation in Synthetic Credit Data},
+  author  = {Upadhyay, Rayan},
+  journal = {The National High School Journal of Science},
+  year    = {2026},
+  url     = {https://nhsjs.com/2026/fairness-and-dependency-preservation-in-synthetic-credit-data/}
+}
+```
+
+## Author
+
+Rayan Upadhyay · [rayanupadhyay.com](https://rayanupadhyay.com)
